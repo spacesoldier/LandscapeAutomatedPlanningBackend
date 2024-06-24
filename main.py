@@ -4,23 +4,54 @@ from fastapi import FastAPI
 from starlette.responses import JSONResponse
 
 from models.project.develop_project import DevelopProject
+from models.project.update_project import ProjectUpdate
+from models.user_tasks.user_task_state import UserTaskState
 
 app = FastAPI()
 from decouple import config
 from motor.motor_asyncio import AsyncIOMotorClient
 
+from fastapi.middleware.cors import CORSMiddleware
 
-@app.get("/maf/territories/list")
+origins = [
+    "http://localhost",
+    "http://localhost:8000",
+    "http://localhost:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/maf/area/list")
 async def list_territories():
-    return {"message": "Hello World"}
+    projects_collection = app.planner_db.get_collection("territory_cards")
+    all_areas_cursor = projects_collection.find(
+                                                    {"area_class": "super_area"},
+                                                    {"_id": 0}
+                                                )
+
+    all_areas = await all_areas_cursor.to_list(length=10000)
+
+    response_data = {
+        "status": "ok",
+        "areas": all_areas
+    }
+
+    return JSONResponse(status_code=200, content=response_data)
 
 
-@app.get("/maf/territories/details/{name}")
-async def get_area_details(name: str):
-    return {"message": f"Hello {name}"}
+@app.get("/maf/area/details/{area_id}")
+async def get_area_details(area_id: str):
+    return {"message": f"Hello {area_id}"}
 
 
-@app.get("/maf/projects/{owner}")
+@app.get("/maf/user/projects/{owner}")
 async def get_projects_by_user(owner: str):
     projects_collection = app.planner_db.get_collection("all_projects")
 
@@ -44,16 +75,127 @@ async def post_new_project(project: DevelopProject):
 
     project_by_id = await projects_collection.find_one({"project_id": project.project_id})
 
+    response_data = {
+        "status": "ok"
+    }
+
     if project_by_id is not None:
         print(f"project {project.model_dump()} already exists")
+        response_data["project_id"] = project.project_id
+        response_data["status"] = project_by_id["status"]
     else:
         project_data = project.model_dump()
         project_data["status"] = "INIT"
         res = await projects_collection.insert_one(project_data)
+        response_data["project_id"] = project.project_id
+        response_data["status"] = "INIT"
+
+    return JSONResponse(status_code=200, content=response_data)
+
+
+@app.post("/maf/projects/update")
+async def update_project_status(project: ProjectUpdate):
+
+    projects_collection = app.planner_db.get_collection("all_projects")
+
+    project_by_id = await projects_collection.find_one({"project_id": project.project_id})
 
     response_data = {
         "status": "ok"
     }
+
+    if project_by_id is not None:
+        print(f"update project {project.project_id} in status {project.status}")
+
+        project_update_result = projects_collection.update_one(
+                                                                {"project_id": project.project_id},
+                                                                {
+                                                                    "$set": {
+                                                                        "develop_areas": project.develop_areas,
+                                                                        "status": project.status
+                                                                    }
+                                                                }
+                                                    )
+    else:
+        response_data["status"] = "not_found"
+        response_data["project_id"] = project.project_id
+
+    return JSONResponse(status_code=200, content=response_data)
+
+
+@app.get("/maf/projects/{project_id}")
+async def get_project_status_by_id(project_id: str):
+
+    projects_collection = app.planner_db.get_collection("all_projects")
+
+    response_data = {
+        "status": "ok"
+    }
+
+    project_by_id = await projects_collection.find_one({"project_id": project_id}, {"_id": 0})
+
+    if project_by_id is not None:
+        response_data["project"] = project_by_id
+    else:
+        response_data["status"] = "not_found"
+        response_data["project"] = {
+            "project_id": "",
+            "project_name": "",
+            "owner": "",
+            "develop_areas": {}
+        }
+
+    return JSONResponse(status_code=200, content=response_data)
+
+
+@app.post("/maf/tasks/current")
+async def assign_task_to_user(task_state: UserTaskState):
+
+    response_data = {
+        "status": "ok",
+    }
+
+    update_result = {}
+
+    pj_owners_collection = app.planner_db.get_collection("project_owners")
+    project_by_owner = await pj_owners_collection.find_one({"owner_id": task_state.owner_id})
+    if project_by_owner is not None:
+        update_result = await pj_owners_collection.update_one(
+                                                            {"owner_id": task_state.owner_id},
+                                                            {"$set": {
+                                                                "has_task": task_state.has_task,
+                                                                "current_task_id": task_state.current_task_id,
+                                                                "current_task_status": task_state.current_task_status
+                                                                }
+                                                            }
+                                                    )
+        response_data["status"] = "updated"
+    else:
+        update_result = await pj_owners_collection.insert_one(task_state.model_dump())
+        response_data["status"] = "new record"
+
+    return JSONResponse(status_code=200, content=response_data)
+
+
+@app.get("/maf/tasks/status/{username}")
+async def get_current_task_by_user(username: str):
+
+    no_task = {
+        "owner_id": username,
+        "has_task": 0,
+        "current_task_id": "",
+        "current_task_status": ""
+    }
+
+    response_data = {}
+
+    pj_owners_collection = app.planner_db.get_collection("project_owners")
+    project_owner_job = await pj_owners_collection.find_one({"owner_id": username}, {"_id": 0})
+
+    if project_owner_job is not None:
+        response_data = UserTaskState(**project_owner_job).model_dump()
+    else:
+        response_data = no_task
 
     return JSONResponse(status_code=200, content=response_data)
 
