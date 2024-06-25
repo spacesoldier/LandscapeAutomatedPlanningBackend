@@ -216,6 +216,150 @@ async def get_projects_by_user(owner: str):
     return JSONResponse(status_code=200, content=response_data)
 
 
+def calc_kids_03_area(total_people):
+    return total_people*0.5
+
+
+def calc_kids_37_area(total_people):
+    return total_people*0.5
+
+
+def calc_kids_714_area(total_people):
+    return total_people*0.5
+
+
+def calc_kids_1518_area(total_people):
+    return total_people*0.7
+
+
+def calc_kids_1518_area(total_people):
+    return total_people*0.7
+
+
+def calc_sport_area(total_people):
+    return total_people*0.7
+
+
+def calc_rest_area(total_people):
+    return total_people*0.3
+
+@app.get("/maf/area/equipment/calc")
+async def calc_areas_equipment():
+    areas_collection = app.planner_db.get_collection("territory_cards")
+
+    all_areas_cursor = areas_collection.find({}, {"_id": 0})
+
+    all_areas = await all_areas_cursor.to_list(length=10000)
+
+    areas_requirements = []
+
+    dem_addresses = []
+
+    dem_data_areas = []
+    no_dem_data_areas = []
+
+    for area in all_areas:
+        if "demography" in area.keys():
+            # print(f"area {area['terr_id']} has demography {json.dumps(area['demography'])}")
+            dem_addresses.append(area["address"])
+            dem_data_areas.append(area)
+        else:
+            no_dem_data_areas.append(area)
+
+    for addr in dem_addresses:
+        print(addr)
+
+    equipment_requirements = []
+    calc_id = str(uuid.uuid4())
+
+    for area in dem_data_areas:
+        people_in_area = 0
+        for record in area['demography']:
+            people_in_area += record['total_people']
+
+        requirement = {
+            "terr_id": area["terr_id"],
+            "requirement_id": str(uuid.uuid4()),
+            "requirement_source": "known_data",
+            "calc_id": calc_id,
+            "total_surface": area["surface"],
+            "kids_03_playground": {
+                "required_area": calc_kids_03_area(people_in_area)
+            },
+            "kids_37_playground": {
+                "required_area": calc_kids_37_area(people_in_area)
+            },
+            "kids_714_playground": {
+                "required_area": calc_kids_714_area(people_in_area)
+            },
+            "kids_1518_playground": {
+                "required_area": calc_kids_1518_area(people_in_area)
+            },
+            "workout_space": {
+                "required_area": calc_sport_area(people_in_area)
+            },
+            "rest_space": {
+                "required_area": calc_rest_area(people_in_area)
+            }
+        }
+
+        equipment_requirements.append(requirement)
+
+    for area in no_dem_data_areas:
+        surface = area['surface']
+        requirement = {
+            "terr_id": area["terr_id"],
+            "requirement_id": str(uuid.uuid4()),
+            "requirement_source": "auto_estimate",
+            "calc_id": calc_id,
+            "total_surface": area["surface"],
+            "kids_03_playground": {
+                "required_area": surface*0.25*0.3
+            },
+            "kids_37_playground": {
+                "required_area": surface*0.25*0.3
+            },
+            "kids_714_playground": {
+                "required_area": surface*0.25*0.3
+            },
+            "kids_1518_playground": {
+                "required_area": surface*0.25
+            },
+            "workout_space": {
+                "required_area": surface*0.25
+            },
+            "rest_space": {
+                "required_area": surface*0.1
+            }
+        }
+        equipment_requirements.append(requirement)
+
+    areas_collection = app.planner_db.get_collection("area_equipment")
+    insert_reqs_rs = await areas_collection.insert_many(equipment_requirements)
+
+    response_data = {
+        "status": "ok"
+    }
+
+    return JSONResponse(status_code=200, content=response_data)
+
+
+
+@app.get("/maf/area/equipment/list/{area_id}")
+async def get_equipment_by_area_id(area_id: str):
+    equipment_collection = app.planner_db.get_collection("area_equipment")
+    equipment_data_cursor = equipment_collection.find({"terr_id": area_id},{"_id":0})
+
+    equipment_data = await equipment_data_cursor.to_list(length=10000)
+
+    response_data = {
+        "status": "ok",
+        "equipment": equipment_data
+    }
+
+    return JSONResponse(status_code=200, content=response_data)
+
+
 @app.post("/maf/projects/new")
 async def post_new_project(project: DevelopProject):
 
