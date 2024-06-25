@@ -1,5 +1,7 @@
 import json
+import uuid
 
+import geopandas
 from fastapi import FastAPI
 from starlette.responses import JSONResponse
 
@@ -29,7 +31,7 @@ app.add_middleware(
 )
 
 
-@app.get("/maf/area/list")
+@app.get("/maf/area/all")
 async def list_territories():
     projects_collection = app.planner_db.get_collection("territory_cards")
     all_areas_cursor = projects_collection.find(
@@ -49,7 +51,152 @@ async def list_territories():
 
 @app.get("/maf/area/details/{area_id}")
 async def get_area_details(area_id: str):
-    return {"message": f"Hello {area_id}"}
+
+    response_data = {
+        "status": "ok"
+    }
+
+    areas_collection = app.planner_db.get_collection("territory_cards")
+    area_rs = await areas_collection.find_one(
+                                                {"terr_id": area_id},
+                                                {"_id": 0}
+                                            )
+
+    if area_rs is None:
+        response_data["status"] = "not_found",
+        response_data["area"] = {}
+    else:
+        response_data["area"] = area_rs
+
+    return JSONResponse(status_code=200, content=response_data)
+
+
+
+
+
+@app.get("/maf/area/backup/all")
+async def backup_all_area_data():
+    response_data = {
+        "status": "ok"
+    }
+
+    areas_collection = app.planner_db.get_collection("territory_cards")
+    get_areas_cursor = areas_collection.find({}, {"_id": 0})
+
+    all_areas = await get_areas_cursor.to_list(length=10000)
+
+    areas_collection_bckup = app.planner_db.get_collection("territory_cards_bckup2")
+    bckup_rs = await areas_collection_bckup.insert_many(all_areas)
+
+    return JSONResponse(status_code=200, content=response_data)
+
+
+from shapely import Polygon
+@app.get("/maf/area/calc/focuses")
+async def calc_contour_focuses():
+    response_data = {
+        "status": "ok"
+    }
+
+    areas_collection = app.planner_db.get_collection("territory_cards")
+    get_areas_cursor = areas_collection.find({}, {"_id": 0})
+
+    all_areas = await get_areas_cursor.to_list(length=10000)
+
+    area_centroids = []
+
+    for area in all_areas:
+        if len(area["contour"]["coordinates"]) > 0:
+            contour_points = area["contour"]["coordinates"][0]
+            if len(contour_points) > 0:
+                pds = geopandas.GeoSeries([Polygon(contour_points)])
+                centroid = {
+                    "focus_id": str(uuid.uuid4()),
+                    "terr_id": area["terr_id"],
+                    "focus": {
+                        "type": "Point",
+                        "coordinates": [pds.centroid.geometry.x.values[0],pds.centroid.geometry.y.values[0]]
+                    }
+                }
+                area_centroids.append(centroid)
+
+    if len(area_centroids) > 0:
+        areas_collection = app.planner_db.get_collection("area_focus")
+        save_rs = await areas_collection.insert_many(area_centroids)
+
+    return JSONResponse(status_code=200, content=response_data)
+
+
+
+
+async def findItemsByList(item_ids: list, areas_collection):
+
+    output = []
+
+    if len(item_ids) > 0:
+
+        get_areas_cursor = areas_collection.find({}, {"_id": 0})
+
+        project_areas_rs = await get_areas_cursor.to_list(length=10000)
+
+        for area in project_areas_rs:
+            if area["terr_id"] in item_ids:
+                output.append(area)
+
+    return output
+
+
+@app.get("/maf/area/by-project/{project_id}")
+async def get_projects_by_user(project_id: str):
+
+    response_data = {
+        "status": "ok"
+    }
+
+    projects_collection = app.planner_db.get_collection("all_projects")
+    project_by_id_rs = await projects_collection.find_one({"project_id": project_id}, {"_id": 0})
+
+    areas_id_list = []
+    if project_by_id_rs is not None:
+        areas_id_list = list(project_by_id_rs["develop_areas"].keys())
+    else:
+        response_data["status"] = "project_not_found"
+
+    areas_collection = app.planner_db.get_collection("territory_cards")
+    project_areas = await findItemsByList(areas_id_list, areas_collection)
+
+    print(f"found {len(areas_id_list)} areas for project_id {project_id}")
+
+    focuses_collection = app.planner_db.get_collection("area_focus")
+    project_focuses = await findItemsByList(areas_id_list, focuses_collection)
+
+    for focus_point in project_focuses:
+        for f_area in project_areas:
+            if f_area["terr_id"] == focus_point["terr_id"]:
+                f_area["focus"] = focus_point
+
+    response_data["areas"] = project_areas
+
+    # find inner areas by id
+    inner_areas_ids = []
+    for area in project_areas:
+        if len(area["contain_areas"]) > 0:
+            for inner_area in area["contain_areas"]:
+                inner_areas_ids.append(inner_area)
+
+    inner_areas = await findItemsByList(inner_areas_ids, areas_collection)
+    inner_project_focuses = await findItemsByList(inner_areas_ids, focuses_collection)
+    for focus_point in inner_project_focuses:
+        for f_area in inner_areas:
+            if f_area["terr_id"] == focus_point["terr_id"]:
+                f_area["focus"] = focus_point
+
+    print(f"found {len(inner_areas)} inner areas for project_id {project_id}")
+
+    for inner_area in inner_areas:
+        response_data["areas"].append(inner_area)
+
+    return JSONResponse(status_code=200, content=response_data)
 
 
 @app.get("/maf/user/projects/{owner}")
