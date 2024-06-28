@@ -15,7 +15,7 @@ async def get_current_task_by_user(username: str):
         "owner_id": username,
         "has_task": 0,
         "current_task_id": "",
-        "current_task_status": ""
+        "current_task_status": "IDLE"
     }
 
     response_data = {}
