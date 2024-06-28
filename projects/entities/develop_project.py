@@ -6,3 +6,4 @@ class DevelopProject(BaseModel):
     project_name: str
     owner: str
     develop_areas: dict
+    develop_clusters: dict
