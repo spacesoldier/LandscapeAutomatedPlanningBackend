@@ -26,6 +26,7 @@ async def get_surface_reqs_by_area_id(area_id: str):
 @equipment_router.get("/surface/calc/required")
 async def calc_areas_equipment():
     areas_collection = mongo.db.get_collection("territory_cards")
+    print("")
 
     all_areas_cursor = areas_collection.find({}, {"_id": 0})
 
