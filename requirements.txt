@@ -9,4 +9,3 @@ geopandas~=0.14.4
 shapely~=2.0.4
 openpyxl~=3.1.4
 starlette~=0.37.2
-decouple~=0.0.7

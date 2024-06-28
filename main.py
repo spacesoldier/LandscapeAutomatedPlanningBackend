@@ -1,3 +1,4 @@
+import decouple
 from fastapi import FastAPI
 from starlette.responses import JSONResponse
 from decouple import config
